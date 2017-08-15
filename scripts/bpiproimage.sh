@@ -113,7 +113,7 @@ mkdir /mnt/volumio/rootfs/boot
 mount -t vfat "${BOOT_PART}" /mnt/volumio/rootfs/boot
 
 echo "Copying Volumio RootFs"
-cp -pdR build/arm/root/* /mnt/volumio/rootfs
+cp -pdR build/$ARCH/root/* /mnt/volumio/rootfs
 echo "Copying BPI-PRO boot files"
 cp platform-banana/bpi-pro/boot/uImage /mnt/volumio/rootfs/boot/
 cp platform-banana/bootp01/* /mnt/volumio/rootfs/boot/
@@ -174,6 +174,14 @@ fi
 echo "Copying Volumio rootfs to Temp Dir"
 cp -rp /mnt/volumio/rootfs/* /mnt/squash/
 
+if [ -e /mnt/kernel_current.tar ]; then
+	echo "Volumio Kernel Partition Archive exists - Cleaning it"
+	rm -rf /mnt/kernel_current.tar
+fi
+
+echo "Creating Kernel Partition Archive"
+tar cf /mnt/kernel_current.tar  -C /mnt/squash/boot/ .
+
 echo "Removing the Kernel"
 rm -rf /mnt/squash/boot/*
 
@@ -191,9 +199,6 @@ sync
 echo "Unmounting Temp Devices"
 umount -l /mnt/volumio/images
 umount -l /mnt/volumio/rootfs/boot
-
-echo "Cleaning build environment"
-rm -rf /mnt/volumio /mnt/boot
 
 dmsetup remove_all
 losetup -d ${LOOP_DEV}

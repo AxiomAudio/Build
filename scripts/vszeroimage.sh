@@ -1,9 +1,9 @@
 #!/bin/sh
 
-# Default build for Debian 32bit (to be changed to armv8)
+# Default build for Debian 32bit
 ARCH="armv7"
 
-while getopts ":v:p:a:" opt; do
+while getopts ":d:v:p:" opt; do
   case $opt in
     v)
       VERSION=$OPTARG
@@ -11,14 +11,11 @@ while getopts ":v:p:a:" opt; do
     p)
       PATCH=$OPTARG
       ;;
-    a)
-      ARCH=$OPTARG
-      ;;
   esac
 done
 
 BUILDDATE=$(date -I)
-IMG_FILE="Volumio${VERSION}-${BUILDDATE}-odroidc2.img"
+IMG_FILE="Volumio${VERSION}-${BUILDDATE}-voltastream0.img"
 
 if [ "$ARCH" = arm ]; then
   DISTRO="Raspbian"
@@ -30,8 +27,7 @@ echo "Creating Image File ${IMG_FILE} with $DISTRO rootfs"
 dd if=/dev/zero of=${IMG_FILE} bs=1M count=2800
 
 echo "Creating Image Bed"
-LOOP_DEV=`losetup -f --show ${IMG_FILE}`
-
+LOOP_DEV=`sudo losetup -f --show ${IMG_FILE}`
 parted -s "${LOOP_DEV}" mklabel msdos
 parted -s "${LOOP_DEV}" mkpart primary fat32 1 64
 parted -s "${LOOP_DEV}" mkpart primary ext3 65 2500
@@ -44,9 +40,7 @@ kpartx -s -a "${LOOP_DEV}"
 BOOT_PART=`echo /dev/mapper/"$( echo ${LOOP_DEV} | sed -e 's/.*\/\(\w*\)/\1/' )"p1`
 SYS_PART=`echo /dev/mapper/"$( echo ${LOOP_DEV} | sed -e 's/.*\/\(\w*\)/\1/' )"p2`
 DATA_PART=`echo /dev/mapper/"$( echo ${LOOP_DEV} | sed -e 's/.*\/\(\w*\)/\1/' )"p3`
-echo "Using: " ${BOOT_PART}
-echo "Using: " ${SYS_PART}
-echo "Using: " ${DATA_PART}
+
 if [ ! -b "${BOOT_PART}" ]
 then
 	echo "${BOOT_PART} doesn't exist"
@@ -59,33 +53,25 @@ mkfs -F -t ext4 -L volumio "${SYS_PART}"
 mkfs -F -t ext4 -L volumio_data "${DATA_PART}"
 sync
 
-echo "Preparing for the Odroid C2 kernel/ platform files"
-if [ -d platform-odroid ]
+echo "Preparing for the Voltastream Zero kernel/ platform files"
+if [ -d platform-pv ]
 then
 	echo "Platform folder already exists - keeping it"
-    # if you really want to re-clone from the repo, then delete the platform-odroid folder
-    # that will refresh all the odroid platforms, see below
-	cd platform-odroid
-	if [ ! -d odroidc2 ]; then
-	   tar xfJ odroidc2.tar.xz
-	fi
-	cd ..
+    # if you really want to re-clone from the repo, then delete the platform-pv folder
+    # that will refresh all the pv platforms, see below
 else
-	echo "Clone all Odroid files from repo"
-	git clone https://github.com/volumio/Platform-Odroid.git platform-odroid
-	echo "Unpack the C2 platform files"
-    cd platform-odroid
-	tar xfJ odroidc2.tar.xz
+	echo "Clone Polyvection files from repo"
+	git clone https://github.com/volumio/platform-pv.git platform-pv
+	echo "Unpack the Voltastream Zero platform files"
+	cd platform-pv
+	tar xfJ vszero.tar.xz
 	cd ..
 fi
 
 echo "Copying the bootloader"
-dd if=platform-odroid/odroidc2/uboot/bl1.bin.hardkernel of=${LOOP_DEV} bs=1 count=442
-dd if=platform-odroid/odroidc2/uboot/bl1.bin.hardkernel of=${LOOP_DEV} bs=512 skip=1 seek=1
-dd if=platform-odroid/odroidc2/uboot/u-boot.bin of=${LOOP_DEV} conv=fsync bs=512 seek=97
+dd if=platform-pv/vszero/u-boot/u-boot-dtb.imx of=${LOOP_DEV} seek=1 bs=1k conv=notrunc
 sync
 
-echo "Preparing for Volumio rootfs"
 if [ -d /mnt ]
 then
 	echo "/mount folder exist"
@@ -98,39 +84,35 @@ then
 	rm -rf /mnt/volumio/*
 else
 	echo "Creating Volumio Temp Directory"
-	mkdir /mnt/volumio
+	sudo mkdir /mnt/volumio
 fi
 
 echo "Creating mount point for the images partition"
 mkdir /mnt/volumio/images
 mount -t ext4 "${SYS_PART}" /mnt/volumio/images
 mkdir /mnt/volumio/rootfs
+echo "Creating mount point for the boot partition"
 mkdir /mnt/volumio/rootfs/boot
 mount -t vfat "${BOOT_PART}" /mnt/volumio/rootfs/boot
 
 echo "Copying Volumio RootFs"
 cp -pdR build/$ARCH/root/* /mnt/volumio/rootfs
-echo "Copying OdroidC2 boot files"
-cp platform-odroid/odroidc2/boot/boot.ini* /mnt/volumio/rootfs/boot
-cp platform-odroid/odroidc2/boot/meson64_odroidc2.dtb /mnt/volumio/rootfs/boot
-cp platform-odroid/odroidc2/boot/Image /mnt/volumio/rootfs/boot
-echo "Copying OdroidC2 modules and firmware"
-cp -pdR platform-odroid/odroidc2/lib/modules /mnt/volumio/rootfs/lib/
-cp -pdR platform-odroid/odroidc2/lib/firmware /mnt/volumio/rootfs/lib/
-echo "Copying OdroidC2 DAC detection service"
-cp platform-odroid/odroidc2/etc/odroiddac.service /mnt/volumio/rootfs/lib/systemd/system/
-cp platform-odroid/odroidc2/etc/odroiddac.sh /mnt/volumio/rootfs/opt/
-echo "Copying framebuffer init script"
-cp platform-odroid/odroidc2/etc/C2_init.sh /mnt/volumio/rootfs/usr/local/bin/c2-init.sh
-echo "Copying OdroidC2 inittab"
-cp platform-odroid/odroidc2/etc/inittab /mnt/volumio/rootfs/etc/
+echo "Copying Voltastream0 boot files"
+cp -R platform-pv/vszero/boot/* /mnt/volumio/rootfs/boot/
 
+echo "Copying Voltastream0 modules and firmware"
+cp -pdR platform-pv/vszero/lib/modules /mnt/volumio/rootfs/lib/
+cp -pdR platform-pv/vszero/lib/firmware /mnt/volumio/rootfs/lib/
+
+echo "Copy the Voltastream0 hotspot.sh version"
+cp platform-pv/vszero/bin/hotspot.sh /mnt/volumio/rootfs/bin/
 sync
 
-echo "Preparing to run chroot for more Odroid-C2 configuration"
-cp scripts/odroidc2config.sh /mnt/volumio/rootfs
+echo "Preparing to run chroot for more Voltastream0 configuration"
+cp scripts/vszeroconfig.sh /mnt/volumio/rootfs
 cp scripts/initramfs/init /mnt/volumio/rootfs/root
 cp scripts/initramfs/mkinitramfs-custom.sh /mnt/volumio/rootfs/usr/local/sbin
+
 #copy the scripts for updating from usb
 wget -P /mnt/volumio/rootfs/root http://repo.volumio.org/Volumio2/Binaries/volumio-init-updater
 
@@ -141,27 +123,19 @@ echo $PATCH > /mnt/volumio/rootfs/patch
 
 chroot /mnt/volumio/rootfs /bin/bash -x <<'EOF'
 su -
-/odroidc2config.sh
+/vszeroconfig.sh
 EOF
 
 #cleanup
-rm /mnt/volumio/rootfs/odroidc2config.sh /mnt/volumio/rootfs/root/init
+rm /mnt/volumio/rootfs/root/init /mnt/volumio/rootfs/vszeroconfig.sh
 
 echo "Unmounting Temp devices"
 umount -l /mnt/volumio/rootfs/dev
 umount -l /mnt/volumio/rootfs/proc
 umount -l /mnt/volumio/rootfs/sys
 
-echo "Copying LIRC configuration files for HK stock remote"
-cp platform-odroid/odroidc2/etc/lirc/lircd.conf /mnt/volumio/rootfs/etc/lirc
-cp platform-odroid/odroidc2/etc/lirc/hardware.conf /mnt/volumio/rootfs/etc/lirc
-cp platform-odroid/odroidc2/etc/lirc/lircrc /mnt/volumio/rootfs/etc/lirc
+echo "==> Voltastream Zero device installed"
 
-echo "==> Odroid-C2 device installed"
-
-#echo "Removing temporary platform files"
-#echo "(you can keep it safely as long as you're sure of no changes)"
-#rm -r platform-odroid
 sync
 
 echo "Preparing rootfs base for SquashFS"

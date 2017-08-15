@@ -18,7 +18,7 @@ while getopts ":v:p:a:" opt; do
 done
 
 BUILDDATE=$(date -I)
-IMG_FILE="Volumio${VERSION}-${BUILDDATE}-pine64.img"
+IMG_FILE="Volumio${VERSION}-${BUILDDATE}-sopine64.img"
 
 if [ "$ARCH" = arm ]; then
   DISTRO="Raspbian"
@@ -76,8 +76,8 @@ else
 fi
 
 echo "Copying the bootloader"
-sudo dd if=platform-pine64/pine64/u-boot/boot0.bin of=${LOOP_DEV} conv=notrunc bs=1k seek=8
-sudo dd if=platform-pine64/pine64/u-boot/u-boot-with-dtb.bin of=${LOOP_DEV} conv=notrunc bs=1k seek=19096
+sudo dd if=platform-pine64/pine64/u-boot/boot0so.bin of=${LOOP_DEV} conv=notrunc bs=1k seek=8
+sudo dd if=platform-pine64/pine64/u-boot/u-boot-with-dtb-so.bin of=${LOOP_DEV} conv=notrunc bs=1k seek=19096
 sync
 
 echo "Preparing for Volumio rootfs"
@@ -105,7 +105,7 @@ sudo mount -t vfat "${BOOT_PART}" /mnt/volumio/rootfs/boot
 
 echo "Copying Volumio RootFs"
 sudo cp -pdR build/$ARCH/root/* /mnt/volumio/rootfs
-echo "Copying pine64 boot files"
+echo "Copying SOPINE A64 boot files"
 mkdir /mnt/volumio/rootfs/boot/pine64
 sudo cp platform-pine64/pine64/boot/pine64/Image /mnt/volumio/rootfs/boot/pine64
 sudo cp platform-pine64/pine64/boot/pine64/*.dtb /mnt/volumio/rootfs/boot/pine64
@@ -113,7 +113,7 @@ sudo cp platform-pine64/pine64/boot/uEnv.txt /mnt/volumio/rootfs/boot
 sudo cp platform-pine64/pine64/boot/Image.version /mnt/volumio/rootfs/boot
 sudo cp platform-pine64/pine64/boot/config* /mnt/volumio/rootfs/boot
 
-echo "Copying pine64 modules and firmware"
+echo "Copying SOPINE A64 modules and firmware"
 sudo cp -pdR platform-pine64/pine64/lib/modules /mnt/volumio/rootfs/lib/
 sudo cp -pdR platform-pine64/pine64/lib/firmware /mnt/volumio/rootfs/lib/
 
@@ -122,7 +122,7 @@ sudo cp platform-pine64/pine64/var/lib/alsa/* /mnt/volumio/rootfs/var/lib/alsa
 
 sync
 
-echo "Preparing to run chroot for more pine64 configuration"
+echo "Preparing to run chroot for more SOPINE A64 configuration (equals pine64)"
 cp scripts/pine64config.sh /mnt/volumio/rootfs
 cp scripts/initramfs/init /mnt/volumio/rootfs/root
 cp scripts/initramfs/mkinitramfs-custom.sh /mnt/volumio/rootfs/usr/local/sbin
@@ -152,7 +152,7 @@ umount -l /mnt/volumio/rootfs/sys
 #sudo cp platform-pine64/pine64/etc/lirc/hardware.conf /mnt/volumio/rootfs/etc/lirc
 #sudo cp platform-pine64/pine64/etc/lirc/lircrc /mnt/volumio/rootfs/etc/lirc
 
-echo "==> Pine64 device installed"
+echo "==> SOPINE A64 device installed"
 
 #echo "Removing temporary platform files"
 #echo "(you can keep it safely as long as you're sure of no changes)"
@@ -172,24 +172,19 @@ fi
 echo "Copying Volumio rootfs to Temp Dir"
 cp -rp /mnt/volumio/rootfs/* /mnt/squash/
 
-if [ -e /mnt/kernel_current.tar.gz ]; then
+if [ -e /mnt/kernel_current.tar ]; then
 	echo "Volumio Kernel Partition Archive exists - Cleaning it"
-	rm -rf /mnt/kernel_current.tar.gz
+	rm -rf /mnt/kernel_current.tar
 fi
 
 echo "Creating Kernel Partition Archive"
-tar zcf /mnt/kernel_current.tar.gz  -C /mnt/squash/boot/ .
+tar cf /mnt/kernel_current.tar  -C /mnt/squash/boot/ .
 
 echo "Removing the Kernel"
 rm -rf /mnt/squash/boot/*
 
 echo "Creating SquashFS, removing any previous one"
-if [ -e Volumio.sqsh ]; then
-	echo "Volumio Kernel Partition Archive exists - Cleaning it"
-	rm -r Volumio.sqsh
-fi
-
-echo "Creating SquashFS"
+rm -r Volumio.sqsh
 mksquashfs /mnt/squash/* Volumio.sqsh
 
 echo "Squash filesystem created"

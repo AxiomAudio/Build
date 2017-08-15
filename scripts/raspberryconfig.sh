@@ -56,10 +56,7 @@ sudo curl -L --output /usr/bin/rpi-update https://raw.githubusercontent.com/Hexx
 touch /boot/start.elf
 mkdir /lib/modules
 
-# Kernel 4.4.9 for Pi3 Support
-# see https://github.com/raspberrypi/firmware/commit/cc6d7bf8b4c03a2a660ff9fdf4083fc165620866
-# and https://github.com/Hexxeh/rpi-firmware/issues/118
-KERNEL_VERSION="4.4.9"
+KERNEL_VERSION="4.9.36"
 
 case $KERNEL_VERSION in
     "4.4.9")
@@ -67,15 +64,18 @@ case $KERNEL_VERSION in
       KERNEL_COMMIT="15ffab5493d74b12194e6bfc5bbb1c0f71140155"
       FIRMWARE_COMMIT="9108b7f712f78cbefe45891bfa852d9347989529"
       ;; 
-    "4.9.25")
-      KERNEL_REV="994"
-      KERNEL_COMMIT="a86bfee5b47a74c13056997f1e4d8b9d8090b398"
+    "4.9.36")
+      KERNEL_REV="1015"
+      KERNEL_COMMIT="400f6d196503e50b87025b888169f30214bc0f19"
       FIRMWARE_COMMIT=$KERNEL_COMMIT
       ;; 
 esac
 
 # using rpi-update relevant to defined kernel version
 echo y | SKIP_BACKUP=1 rpi-update $KERNEL_COMMIT
+
+echo "Getting actual kernel revision with firmware revision backup"
+cp /boot/.firmware_revision /boot/.firmware_revision_kernel
 
 echo "Updating bootloader files *.elf *.dat *.bin"
 echo y | SKIP_KERNEL=1 rpi-update $FIRMWARE_COMMIT
@@ -114,49 +114,9 @@ wget http://repo.volumio.org/Volumio2/wireless-firmwares/brcmfmac43143.bin -P /l
 echo "Installing WiringPi from Raspberrypi.org Repo"
 apt-get -y install wiringpi
 
-echo "adding gpio & spi group and permissions"
-groupadd -f --system gpio
-groupadd -f --system spi
-
-echo "adding volumio to gpio group and al"
-usermod -a -G gpio,i2c,spi,input volumio
-
-echo "Use up-to-date jessie rules for gpio & al."
-read -rd '' Rule_String <<"EOF"
-SUBSYSTEM=="input", GROUP="input", MODE="0660"
-SUBSYSTEM=="i2c-dev", GROUP="i2c", MODE="0660"
-SUBSYSTEM=="spidev", GROUP="spi", MODE="0660"
-SUBSYSTEM=="bcm2835-gpiomem", GROUP="gpio", MODE="0660"
-
-SUBSYSTEM=="gpio*", PROGRAM="/bin/sh -c '\
-	chown -R root:gpio /sys/class/gpio && chmod -R 770 /sys/class/gpio;\
-	chown -R root:gpio /sys/devices/virtual/gpio && chmod -R 770 /sys/devices/virtual/gpio;\
-	chown -R root:gpio /sys$devpath && chmod -R 770 /sys$devpath\
-'"
-
-KERNEL=="ttyAMA[01]", PROGRAM="/bin/sh -c '\
-	ALIASES=/proc/device-tree/aliases; \
-	if cmp -s $ALIASES/uart0 $ALIASES/serial0; then \
-		echo 0;\
-	elif cmp -s $ALIASES/uart0 $ALIASES/serial1; then \
-		echo 1; \
-	else \
-		exit 1; \
-	fi\
-'", SYMLINK+="serial%c"
-
-KERNEL=="ttyS0", PROGRAM="/bin/sh -c '\
-	ALIASES=/proc/device-tree/aliases; \
-	if cmp -s $ALIASES/uart1 $ALIASES/serial0; then \
-		echo 0; \
-	elif cmp -s $ALIASES/uart1 $ALIASES/serial1; then \
-		echo 1; \
-	else \
-		exit 1; \
-	fi \
-'", SYMLINK+="serial%c"
-EOF
-echo "${Rule_String}" > /etc/udev/rules.d/99-com.rules
+echo "Configuring boot splash"
+apt-get -y install plymouth plymouth-themes
+plymouth-set-default-theme volumio
 
 echo "Removing unneeded binaries"
 apt-get -y remove binutils
@@ -166,16 +126,25 @@ echo "initramfs volumio.initrd
 gpu_mem=16
 max_usb_current=1
 dtparam=audio=on
+audio_pwm_mode=2
 dtparam=i2c_arm=on
 disable_splash=1" >> /boot/config.txt
 
-
 echo "Writing cmdline.txt file"
-echo "dwc_otg.lpm_enable=0 dwc_otg.fiq_enable=1 dwc_otg.fiq_fsm_enable=1 dwc_otg.fiq_fsm_mask=0x3 console=ttyAMA0,115200 kgdboc=ttyAMA0,115200 console=tty1 imgpart=/dev/mmcblk0p2 imgfile=/volumio_current.sqsh elevator=noop rootwait smsc95xx.turbo_mode=N bootdelay=5" >> /boot/cmdline.txt
+echo "splash quiet plymouth.ignore-serial-consoles dwc_otg.lpm_enable=0 dwc_otg.fiq_enable=1 dwc_otg.fiq_fsm_enable=1 dwc_otg.fiq_fsm_mask=0x3 console=serial0,115200 kgdboc=serial0,115200 console=tty1 imgpart=/dev/mmcblk0p2 imgfile=/volumio_current.sqsh elevator=noop rootwait smsc95xx.turbo_mode=N bootdelay=5 logo.nologo vt.global_cursor_default=0 loglevel=0" >> /boot/cmdline.txt
 
-echo "Cleaning APT Cache"
-rm -f /var/lib/apt/lists/*archive*
-apt-get clean
+echo "adding gpio & spi group and permissions"
+groupadd -f --system gpio
+groupadd -f --system spi
+
+echo "adding volumio to gpio group and al"
+usermod -a -G gpio,i2c,spi,input volumio
+
+echo "Installing raspberrypi-sys-mods System customizations (& removing few bits)"
+apt-get -y install raspberrypi-sys-mods
+rm /etc/sudoers.d/010_pi-nopasswd
+unlink /etc/systemd/system/multi-user.target.wants/sshswitch.service
+rm /lib/systemd/system/sshswitch.service
 
 echo "Exporting /opt/vc/bin variable"
 export LD_LIBRARY_PATH=/opt/vc/lib/:LD_LIBRARY_PATH
@@ -215,49 +184,57 @@ cd wifi
 echo "WIFI: 8192EU for armv7"
 wget $MRENGMAN_REPO/8192eu-$KERNEL_VERSION-v7-$KERNEL_REV.tar.gz
 tar xf 8192eu-$KERNEL_VERSION-v7-$KERNEL_REV.tar.gz
-./install.sh
+sed -i 's/^kernel=.*$/kernel='"$KERNEL_VERSION"'-v7+/' install.sh
+sh install.sh
 rm -rf *
 
 echo "WIFI: 8192EU for armv6"
 wget $MRENGMAN_REPO/8192eu-$KERNEL_VERSION-$KERNEL_REV.tar.gz
 tar xf 8192eu-$KERNEL_VERSION-$KERNEL_REV.tar.gz
-./install.sh
+sed -i 's/^kernel=.*$/kernel='"$KERNEL_VERSION"'+/' install.sh
+sh install.sh
 rm -rf *
 
 echo "WIFI: 8812AU for armv7"
 wget $MRENGMAN_REPO/8812au-$KERNEL_VERSION-v7-$KERNEL_REV.tar.gz
 tar xf 8812au-$KERNEL_VERSION-v7-$KERNEL_REV.tar.gz
-./install.sh
+sed -i 's/^kernel=.*$/kernel='"$KERNEL_VERSION"'-v7+/' install.sh
+sh install.sh
 rm -rf *
 
 echo "WIFI: 8812AU for armv6"
 wget $MRENGMAN_REPO/8812au-$KERNEL_VERSION-$KERNEL_REV.tar.gz
 tar xf 8812au-$KERNEL_VERSION-$KERNEL_REV.tar.gz
-./install.sh
+sed -i 's/^kernel=.*$/kernel='"$KERNEL_VERSION"'+/' install.sh
+sh install.sh
 rm -rf *
 
 echo "WIFI: 8188EU for armv7"
 wget $MRENGMAN_REPO/8188eu-$KERNEL_VERSION-v7-$KERNEL_REV.tar.gz
 tar xf 8188eu-$KERNEL_VERSION-v7-$KERNEL_REV.tar.gz
-./install.sh
+sed -i 's/^kernel=.*$/kernel='"$KERNEL_VERSION"'-v7+/' install.sh
+sh install.sh
 rm -rf *
 
 echo "WIFI: 8188EU for armv6"
 wget $MRENGMAN_REPO/8188eu-$KERNEL_VERSION-$KERNEL_REV.tar.gz
 tar xf 8188eu-$KERNEL_VERSION-$KERNEL_REV.tar.gz
-./install.sh
+sed -i 's/^kernel=.*$/kernel='"$KERNEL_VERSION"'+/' install.sh
+sh install.sh
 rm -rf *
 
 echo "WIFI: MT7610 for armv7"
 wget $MRENGMAN_REPO/mt7610-$KERNEL_VERSION-v7-$KERNEL_REV.tar.gz
 tar xf mt7610-$KERNEL_VERSION-v7-$KERNEL_REV.tar.gz
-./install.sh
+sed -i 's/^kernel=.*$/kernel='"$KERNEL_VERSION"'-v7+/' install.sh
+sh install.sh
 rm -rf *
 
 echo "WIFI: MT7610 for armv6"
 wget $MRENGMAN_REPO/mt7610-$KERNEL_VERSION-$KERNEL_REV.tar.gz
 tar xf mt7610-$KERNEL_VERSION-$KERNEL_REV.tar.gz
-./install.sh
+sed -i 's/^kernel=.*$/kernel='"$KERNEL_VERSION"'+/' install.sh
+sh install.sh
 rm -rf *
 
 cd ..
@@ -284,20 +261,9 @@ rm /patch
 
 if [ "$PATCH" = "volumio" ]; then
 
-echo "Adding third party kernel modules"
-
-if [ "$KERNEL_VERSION" = "4.4.9" ]; then
-
-### Allo I2S Firmware
-echo "Getting Allo Modules"
+echo "Adding third party Firmware"
 cd /
-echo "Getting Allo DAC Modules"
-wget http://repo.volumio.org/Volumio2/Firmwares/rpi-volumio-4.4.9-AlloDAC-modules.tgz
-echo "Extracting Allo DAC modules"
-tar xf rpi-volumio-4.4.9-AlloDAC-modules.tgz
-rm rpi-volumio-4.4.9-AlloDAC-modules.tgz
-
-echo "Getting Allo Piano Firmwares"
+echo "Getting Allo Piano Firmware"
 wget --no-check-certificate  https://github.com/allocom/piano-firmware/archive/master.tar.gz
 echo "Extracting Allo Firmwares"
 tar xf master.tar.gz
@@ -305,8 +271,19 @@ cp -rp /piano-firmware-master/* /
 rm -rf /piano-firmware-master 
 rm /README.md
 rm master.tar.gz
+echo "Allo firmware installed"
 
-echo "Allo modules and firmware installed"
+
+if [ "$KERNEL_VERSION" = "4.4.9" ]; then
+
+### Allo I2S Modules
+echo "Getting Allo DAC Modules"
+wget http://repo.volumio.org/Volumio2/Firmwares/rpi-volumio-4.4.9-AlloDAC-modules.tgz
+echo "Extracting Allo DAC modules"
+tar xf rpi-volumio-4.4.9-AlloDAC-modules.tgz
+rm rpi-volumio-4.4.9-AlloDAC-modules.tgz
+
+echo "Allo modules installed"
 
 echo "Adding Pisound Kernel Module and dtbo"
 wget http://repo.volumio.org/Volumio2/Firmwares/rpi-volumio-4.4.9-pisound-modules.tgz
@@ -318,7 +295,6 @@ fi
 fi
 
 echo "Installing winbind here, since it freezes networking"
-apt-get update
 apt-get install -y winbind libnss-winbind
 
 echo "Finalising drivers installation with depmod on $KERNEL_VERSION+ and $KERNEL_VERSION-v7+"
